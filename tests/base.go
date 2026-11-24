@@ -21,3 +21,5 @@ func TearDownSuite() {
 func Precondition(text string) {
 	utils.LogWithLabelAndTimeStamp("Precondition", text)
 }
+
+const InvalidToken = "invalid_token"

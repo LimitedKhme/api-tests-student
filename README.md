@@ -53,3 +53,12 @@ TEST_PASSWORD=your_password
 ```bash
   golangci-lint run
 ```
+
+Для запуска тестов необходимо дополнительно создать в корне проекта файл .env с содержимым:
+
+TEST_LOGIN=your_main_user_email
+TEST_PASSWORD=your_main_user_password
+SECOND_TEST_LOGIN=your_second_user_email
+SECOND_TEST_PASSWORD=your_second_user_password
+API_URL=https://testboard.avito.com/api/v1
+DEBUG=false

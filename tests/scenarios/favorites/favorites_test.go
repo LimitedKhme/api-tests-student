@@ -3,13 +3,13 @@ package favorites
 import (
 	"net/http"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/tidwall/gjson"
 
+	"api-tests-template/internal/assertions"
 	advManager "api-tests-template/internal/managers/advertisements"
 	advModels "api-tests-template/internal/managers/advertisements/models"
 	"api-tests-template/internal/managers/auth"
@@ -19,10 +19,8 @@ import (
 )
 
 const (
-	photoPath       = "../../../photo.png"
-	nonExistentAdID = "00000000-0000-0000-0000-000000000000"
-	secondUserEmail = "autotest_helper_user_99@gmail.com"
-	secondUserPass  = "1234567A_a"
+	photoPath       = "photo.png"
+	nonExistentAdID = "11111111-1111-4111-8111-111111111111"
 )
 
 type TestSuite struct {
@@ -39,7 +37,7 @@ func (s *TestSuite) SetupSuite() {
 	tests.SetupSuite()
 	tests.Precondition("Авторизация основного и вспомогательного пользователей")
 	s.loginData = auth.Login(s.T(), os.Getenv("TEST_LOGIN"), os.Getenv("TEST_PASSWORD"))
-	s.secondLoginData = auth.RegisterAndLogin(s.T(), secondUserEmail, secondUserPass)
+	s.secondLoginData = auth.RegisterAndLogin(s.T(), os.Getenv("SECOND_TEST_LOGIN"), os.Getenv("SECOND_TEST_PASSWORD"))
 }
 
 // createAdByToken создает временное объявление от имени владельца токена и возвращает его ID.
@@ -74,14 +72,14 @@ func (s *TestSuite) TestFavorites_Positive() {
 		favManager.AddToFavorites(s.T(), s.loginData.Token, adID, http.StatusCreated)
 
 		favBody := favManager.GetFavorites(s.T(), s.loginData.Token, http.StatusOK)
-		require.True(s.T(), strings.Contains(favBody, adID), "Добавленное объявление должно присутствовать в списке избранного")
+		require.True(s.T(), hasFavoriteID(favBody, adID), "Добавленное объявление %s должно присутствовать в списке избранного. Ответ: %s", adID, favBody)
 	})
 
 	s.Run("Удаление объявления из избранного (204) и проверка, что оно пропало из списка", func() {
 		favManager.RemoveFromFavorites(s.T(), s.loginData.Token, adID, http.StatusNoContent)
 
 		favBody := favManager.GetFavorites(s.T(), s.loginData.Token, http.StatusOK)
-		require.False(s.T(), strings.Contains(favBody, adID), "Удаленное объявление не должно быть в списке избранного")
+		require.False(s.T(), hasFavoriteID(favBody, adID), "Удаленное объявление не должно быть в списке избранного")
 	})
 
 	s.Run("При удалении самого объявления через DELETE /advertisement оно исчезает из избранного", func() {
@@ -92,30 +90,30 @@ func (s *TestSuite) TestFavorites_Positive() {
 		isAdDeleted = true
 
 		favBody := favManager.GetFavorites(s.T(), s.loginData.Token, http.StatusOK)
-		require.False(s.T(), strings.Contains(favBody, adID), "После удаления самого объявления оно должно пропасть из избранного")
+		require.False(s.T(), hasFavoriteID(favBody, adID), "После удаления самого объявления оно должно пропасть из избранного")
 	})
 }
 
 func (s *TestSuite) TestFavorites_Negative() {
-	s.Run("Добавление в избранное несуществующего ad_id (400)", func() {
-		respBody := favManager.AddToFavorites(s.T(), s.loginData.Token, nonExistentAdID, http.StatusBadRequest)
-		require.NotEmpty(s.T(), gjson.Get(respBody, "error").String(), "Должно вернуться сообщение об ошибке")
+	s.Run("Добавление в избранное несуществующего ad_id (404)", func() {
+		respBody := favManager.AddToFavorites(s.T(), s.loginData.Token, nonExistentAdID, http.StatusNotFound)
+		assertions.AssertAPIError(s.T(), respBody, "not_found", "Advertisement not found")
 	})
 
 	s.Run("Удаление из избранного несуществующего ad_id (404)", func() {
 		respBody := favManager.RemoveFromFavorites(s.T(), s.loginData.Token, nonExistentAdID, http.StatusNotFound)
-		require.NotEmpty(s.T(), gjson.Get(respBody, "error").String(), "Должно вернуться сообщение об ошибке")
+		assertions.AssertAPIError(s.T(), respBody, "not_found", "Favorite entry not found")
 	})
 
 	s.Run("Запросы к ручкам избранного без авторизации возвращают 401 Unauthorized", func() {
-		respGet := favManager.GetFavorites(s.T(), "invalid_token", http.StatusUnauthorized)
-		require.NotEmpty(s.T(), gjson.Get(respGet, "error").String(), "Должно вернуться сообщение об ошибке")
+		respGet := favManager.GetFavorites(s.T(), tests.InvalidToken, http.StatusUnauthorized)
+		assertions.AssertAPIError(s.T(), respGet, "unauthorized", "Invalid or expired token")
 
-		respPost := favManager.AddToFavorites(s.T(), "invalid_token", nonExistentAdID, http.StatusUnauthorized)
-		require.NotEmpty(s.T(), gjson.Get(respPost, "error").String(), "Должно вернуться сообщение об ошибке")
+		respPost := favManager.AddToFavorites(s.T(), tests.InvalidToken, nonExistentAdID, http.StatusUnauthorized)
+		assertions.AssertAPIError(s.T(), respPost, "unauthorized", "Invalid or expired token")
 
-		respDel := favManager.RemoveFromFavorites(s.T(), "invalid_token", nonExistentAdID, http.StatusUnauthorized)
-		require.NotEmpty(s.T(), gjson.Get(respDel, "error").String(), "Должно вернуться сообщение об ошибке")
+		respDel := favManager.RemoveFromFavorites(s.T(), tests.InvalidToken, nonExistentAdID, http.StatusUnauthorized)
+		assertions.AssertAPIError(s.T(), respDel, "unauthorized", "Invalid or expired token")
 	})
 
 	s.Run("Бизнес-ограничение: попытка добавить своё собственное объявление в избранное возвращает 403 Forbidden", func() {
@@ -123,7 +121,7 @@ func (s *TestSuite) TestFavorites_Negative() {
 		defer advManager.DeleteAdvertisement(s.T(), s.loginData.Token, ownAdID, http.StatusNoContent)
 
 		respOwn := favManager.AddToFavorites(s.T(), s.loginData.Token, ownAdID, http.StatusForbidden)
-		require.NotEmpty(s.T(), gjson.Get(respOwn, "error").String(), "Должно вернуться сообщение об ошибке 403")
+		assertions.AssertAPIError(s.T(), respOwn, "forbidden", "Cannot add own advertisement to favorites")
 	})
 
 	s.Run("Бизнес-ограничение: повторное добавление того же объявления возвращает 409 Conflict", func() {
@@ -133,6 +131,19 @@ func (s *TestSuite) TestFavorites_Negative() {
 		favManager.AddToFavorites(s.T(), s.loginData.Token, otherAdID, http.StatusCreated)
 
 		respDuplicate := favManager.AddToFavorites(s.T(), s.loginData.Token, otherAdID, http.StatusConflict)
-		require.NotEmpty(s.T(), gjson.Get(respDuplicate, "error").String(), "Должно вернуться сообщение об ошибке 409")
+		assertions.AssertAPIError(s.T(), respDuplicate, "already_exists", "Advertisement is already in favorites")
 	})
+}
+
+// hasFavoriteID проверяет, присутствует ли объявление с указанным ID в JSON-списке избранного.
+func hasFavoriteID(favBody, adID string) bool {
+	found := false
+	gjson.Get(favBody, "items").ForEach(func(_, item gjson.Result) bool {
+		if item.Get("advertisement.id").String() == adID {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
 }
